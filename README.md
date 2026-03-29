@@ -2,7 +2,9 @@
 
 **Sprachsteuerung für Claude Code** — Diktieren per Push-to-Talk, Antworten per Sprachausgabe.
 
-> Whisper (STT) läuft vollständig lokal. TTS nutzt Edge-TTS (Microsoft Neural Voices) — erfordert Internetverbindung. Für vollständig offline: [Piper TTS](https://github.com/rhasspy/piper) als Alternative (siehe Bekannte Einschränkungen).
+> **Spracheingabe (STT):** Läuft vollständig lokal mit faster-whisper — deine Diktate verlassen niemals den Rechner.
+>
+> **Sprachausgabe (TTS):** Nutzt Edge-TTS (Microsoft Neural Voices) — dabei wird nur der Antwort-Text von Claude an Microsoft gesendet, keine Nutzereingaben. Erfordert Internetverbindung. Für vollständig offline: [Piper TTS](https://github.com/rhasspy/piper) als Alternative (siehe Bekannte Einschränkungen).
 
 ---
 
