@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
 TTS MCP-Server for Claude Code
-Uses edge-tts (Microsoft Neural Voices) for natural speech output.
+Supports two engines:
+  - edge-tts (Microsoft Neural Voices, requires internet)
+  - piper (fully local, offline)
 
 Setup:
-  1. pip install edge-tts
-  2. Add to .mcp.json:
+  1. pip install edge-tts        (for edge engine)
+     pip install piper-tts       (for piper engine)
+  2. For piper: download a voice model (see README)
+  3. Add to .mcp.json:
      {"mcpServers": {"tts-server": {"command": "python", "args": ["path/to/tts_mcp_server.py"]}}}
-  3. Add speak() instructions to CLAUDE.md (see README)
 """
 
 import asyncio
@@ -18,20 +21,39 @@ import sys
 import tempfile
 import threading
 import time
-
-import edge_tts
+import wave
 
 # ── Configuration ──
-VOICE = "de-DE-KatjaNeural"  # Microsoft Neural Voice (German, female)
-RATE = "+20%"                 # Speech speed (1.2x)
-VOLUME = "+0%"                # Volume offset
+TTS_ENGINE = "piper"              # "edge" = Edge-TTS (internet), "piper" = Piper (local)
+
+# Edge-TTS settings
+EDGE_VOICE = "de-DE-KatjaNeural"  # Microsoft Neural Voice
+EDGE_RATE = "+20%"                # Speech speed
+EDGE_VOLUME = "+0%"               # Volume offset
+
+# Piper settings
+PIPER_MODEL = r"path\to\de_DE-thorsten-high.onnx"  # ← Change to your model path
+PIPER_SPEED = 0.85                # Lower = faster (1.0 = normal)
+
 TEMP_DIR = tempfile.gettempdir()
 
 _tts_lock = threading.Lock()
+_piper_voice = None
 
 
-def _play_mp3(filepath):
-    """Play MP3 via Windows PowerShell MediaPlayer and wait for completion."""
+def _get_piper_voice():
+    """Lazy-load Piper voice (once)."""
+    global _piper_voice
+    if _piper_voice is None:
+        from piper.voice import PiperVoice
+        sys.stderr.write(f"Loading Piper model: {PIPER_MODEL}\n")
+        _piper_voice = PiperVoice.load(PIPER_MODEL)
+        sys.stderr.write("Piper model loaded.\n")
+    return _piper_voice
+
+
+def _play_audio(filepath):
+    """Play audio via Windows PowerShell MediaPlayer and wait for completion."""
     try:
         ps_script = f'''
 Add-Type -AssemblyName presentationCore
@@ -39,12 +61,10 @@ $player = New-Object System.Windows.Media.MediaPlayer
 $player.Open([System.Uri]::new("{filepath}"))
 Start-Sleep -Milliseconds 600
 $player.Play()
-# Wait for NaturalDuration to become available
 while (-not $player.NaturalDuration.HasTimeSpan) {{
     Start-Sleep -Milliseconds 100
 }}
 $total = $player.NaturalDuration.TimeSpan.TotalMilliseconds
-# Wait until playback finished
 while ($player.Position.TotalMilliseconds -lt ($total - 50)) {{
     Start-Sleep -Milliseconds 200
 }}
@@ -65,22 +85,42 @@ $player.Close()
             pass
 
 
+def _speak_edge(text, audio_path):
+    """TTS with Edge-TTS (internet required)."""
+    import edge_tts
+
+    async def generate():
+        communicate = edge_tts.Communicate(text, EDGE_VOICE, rate=EDGE_RATE, volume=EDGE_VOLUME)
+        await communicate.save(audio_path)
+
+    asyncio.run(generate())
+
+
+def _speak_piper(text, audio_path):
+    """TTS with Piper (fully local)."""
+    from piper.config import SynthesisConfig
+    voice = _get_piper_voice()
+    config = SynthesisConfig(length_scale=PIPER_SPEED)
+    with wave.open(audio_path, 'wb') as wav_file:
+        voice.synthesize_wav(text, wav_file, syn_config=config)
+
+
 def _speak_thread(text):
     """Generate TTS audio + play it (runs in separate thread)."""
     with _tts_lock:
         try:
-            mp3_path = os.path.join(TEMP_DIR, f"tts_{int(time.time()*1000)}.mp3")
+            ext = ".mp3" if TTS_ENGINE == "edge" else ".wav"
+            audio_path = os.path.join(TEMP_DIR, f"tts_{int(time.time()*1000)}{ext}")
 
-            async def generate():
-                communicate = edge_tts.Communicate(text, VOICE, rate=RATE, volume=VOLUME)
-                await communicate.save(mp3_path)
-
-            asyncio.run(generate())
-
-            if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0:
-                _play_mp3(mp3_path)
+            if TTS_ENGINE == "edge":
+                _speak_edge(text, audio_path)
             else:
-                sys.stderr.write("TTS: Empty MP3 generated\n")
+                _speak_piper(text, audio_path)
+
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                _play_audio(audio_path)
+            else:
+                sys.stderr.write("TTS: Empty audio file generated\n")
 
         except Exception as e:
             sys.stderr.write(f"TTS error: {e}\n")
@@ -91,7 +131,6 @@ def handle_message(msg):
     method = msg.get('method', '')
     msg_id = msg.get('id')
 
-    # Initialize
     if method == 'initialize':
         return {
             "jsonrpc": "2.0",
@@ -99,15 +138,13 @@ def handle_message(msg):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "tts-server", "version": "2.0.0"}
+                "serverInfo": {"name": "tts-server", "version": "3.0.0"}
             }
         }
 
-    # Initialized notification
     if method == 'notifications/initialized':
         return None
 
-    # List tools
     if method == 'tools/list':
         return {
             "jsonrpc": "2.0",
@@ -135,7 +172,6 @@ def handle_message(msg):
             }
         }
 
-    # Call tool
     if method == 'tools/call':
         params = msg.get('params', {})
         tool_name = params.get('name', '')
@@ -163,11 +199,9 @@ def handle_message(msg):
                     }
                 }
 
-    # Ping
     if method == 'ping':
         return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
 
-    # Unknown method
     if msg_id is not None:
         return {
             "jsonrpc": "2.0",
@@ -178,9 +212,19 @@ def handle_message(msg):
     return None
 
 
-# ── MCP stdio Loop ──
 def main():
-    sys.stderr.write(f"TTS MCP-Server v2.0 started (Voice: {VOICE}, Rate: {RATE})\n")
+    if TTS_ENGINE == "piper":
+        engine_label = f"Piper (local, {os.path.basename(PIPER_MODEL)})"
+    else:
+        engine_label = f"Edge-TTS ({EDGE_VOICE})"
+    sys.stderr.write(f"TTS MCP-Server v3.0 started — Engine: {engine_label}\n")
+
+    # Pre-load Piper model at startup (no delay on first speak)
+    if TTS_ENGINE == "piper":
+        try:
+            _get_piper_voice()
+        except Exception as e:
+            sys.stderr.write(f"Could not load Piper model: {e}\n")
 
     for line in sys.stdin:
         line = line.strip()

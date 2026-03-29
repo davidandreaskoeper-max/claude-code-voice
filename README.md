@@ -85,12 +85,36 @@ Diese Lösung behebt alle vier Probleme.
 ### 1. Dependencies installieren
 
 ```bash
-pip install faster-whisper edge-tts pynput sounddevice numpy pyautogui pyperclip
+# Voice Input
+pip install faster-whisper pynput sounddevice numpy pyautogui pyperclip
+
+# Voice Output — wähle eine oder beide:
+pip install edge-tts      # Option A: Edge-TTS (braucht Internet, beste Qualität)
+pip install piper-tts     # Option B: Piper (komplett offline/lokal)
 ```
 
 > Beim ersten Start wird das Whisper-Modell "small" (~460 MB) heruntergeladen und gecacht.
 
-### 2. Audio-Device ermitteln
+### 2. (Nur für Piper) Voice-Modell herunterladen
+
+```python
+from piper.download_voices import download_voice
+from pathlib import Path
+
+download_voice('de_DE-thorsten-high', Path('./piper-voices'))
+```
+
+Das lädt `de_DE-thorsten-high.onnx` (~108 MB) herunter. Verfügbare deutsche Stimmen:
+
+| Voice | Qualität | Geschlecht |
+|---|---|---|
+| `de_DE-thorsten-high` | **Hoch (empfohlen)** | Männlich |
+| `de_DE-thorsten-medium` | Mittel | Männlich |
+| `de_DE-kerstin-low` | Niedrig | Weiblich |
+| `de_DE-ramona-low` | Niedrig | Weiblich |
+| `de_DE-thorsten_emotional-medium` | Mittel | Männlich (emotional) |
+
+### 3. Audio-Device ermitteln
 
 ```python
 import sounddevice as sd
@@ -99,7 +123,7 @@ print(sd.query_devices())
 
 Notiere die **Nummer** deines Mikrofons (z.B. `8`).
 
-### 3. Voice Input konfigurieren
+### 4. Voice Input konfigurieren
 
 In `voice_input.py` anpassen:
 
@@ -111,7 +135,23 @@ WHISPER_COMPUTE = "int8"  # "float16" für GPU
 PTT_KEY = keyboard.Key.f9 # Beliebige Taste
 ```
 
-### 4. MCP-Server registrieren
+### 5. TTS-Engine wählen
+
+In `tts_mcp_server.py` anpassen:
+
+```python
+TTS_ENGINE = "piper"    # "piper" = komplett lokal, "edge" = Microsoft Neural Voices
+
+# Piper-Einstellungen (nur bei TTS_ENGINE = "piper")
+PIPER_MODEL = r"path\to\de_DE-thorsten-high.onnx"  # ← Pfad zum Modell
+PIPER_SPEED = 0.85                                   # Kleiner = schneller
+
+# Edge-TTS-Einstellungen (nur bei TTS_ENGINE = "edge")
+EDGE_VOICE = "de-DE-KatjaNeural"
+EDGE_RATE = "+20%"
+```
+
+### 6. MCP-Server registrieren
 
 Erstelle `.mcp.json` in deinem Claude Code Arbeitsverzeichnis:
 
@@ -129,7 +169,7 @@ Erstelle `.mcp.json` in deinem Claude Code Arbeitsverzeichnis:
 > **Windows-Tipp:** Falls `"python"` nicht funktioniert, den vollen Pfad verwenden:
 > `"C:\\Users\\DEIN_USER\\AppData\\Local\\Python\\pythonXXX\\python.exe"`
 
-### 5. CLAUDE.md konfigurieren
+### 7. CLAUDE.md konfigurieren
 
 Damit Claude Code automatisch vorliest, füge in deine `CLAUDE.md` ein:
 
@@ -147,7 +187,7 @@ Was NICHT vorlesen: Code-Blöcke, SQL, JSON, Diffs, lange Listen.
 Was vorlesen: Zahlen, Ergebnisse, Statusmeldungen, Kurzantworten.
 ```
 
-### 6. Starten
+### 8. Starten
 
 **Terminal 1 — Voice Input:**
 ```bash
@@ -287,7 +327,7 @@ start /MIN "VoiceInput" "C:\full\path\to\python.exe" "-u" "C:\path\to\voice_inpu
 ## Bekannte Einschränkungen
 
 - **Windows only** — `pyautogui` und PowerShell MediaPlayer sind Windows-spezifisch. macOS/Linux-Portierung möglich (PRs willkommen).
-- **Edge-TTS braucht Internet** — Die Sprachsynthese läuft über Microsoft-Server. Für vollständig offline: [Piper TTS](https://github.com/rhasspy/piper) als Alternative.
+- **Edge-TTS braucht Internet** — Nur relevant bei `TTS_ENGINE = "edge"`. Mit `TTS_ENGINE = "piper"` ist alles 100% offline. [Piper TTS](https://github.com/rhasspy/piper) ist eingebaut und bereit.
 - **Whisper "small" auf CPU** — Transkription dauert ~1-3 Sekunden. Mit GPU deutlich schneller.
 
 ---
