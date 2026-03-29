@@ -2,9 +2,7 @@
 
 **Sprachsteuerung für Claude Code** — Diktieren per Push-to-Talk, Antworten per Sprachausgabe.
 
-> Vollständig lokal, keine Cloud-Dienste. Whisper läuft auf der CPU, TTS nutzt Edge-TTS (Microsoft Neural Voices).
-
-https://github.com/user-attachments/assets/placeholder
+> Whisper (STT) läuft vollständig lokal. TTS nutzt Edge-TTS (Microsoft Neural Voices) — erfordert Internetverbindung. Für vollständig offline: [Piper TTS](https://github.com/rhasspy/piper) als Alternative (siehe Bekannte Einschränkungen).
 
 ---
 
@@ -14,7 +12,7 @@ Zwei Python-Skripte, die Claude Code um Sprach-Ein- und Ausgabe erweitern:
 
 | Komponente | Datei | Funktion |
 |---|---|---|
-| **Voice Input** | `frau_mueller_voice.py` | Push-to-Talk (F9) → faster-whisper → Text ins Terminal |
+| **Voice Input** | `voice_input.py` | Push-to-Talk (F9) → faster-whisper → Text ins Terminal |
 | **Voice Output** | `tts_mcp_server.py` | MCP-Server → edge-tts → Sprachausgabe über Lautsprecher |
 
 ### So funktioniert's
@@ -53,6 +51,33 @@ Claude antwortet → MCP speak() Tool → edge-tts → Katja Neural → Lautspre
 
 ---
 
+## Warum nicht Claude Code's eingebautes /voice?
+
+| Problem | Details |
+|---|---|
+| Natives Audio-Modul fehlt | Windows npm-Paket unvollständig |
+| 4 Sekunden Delay | Stream-Init erst beim Tastendruck |
+| Cloud-STT | Nicht DSGVO-konform |
+| Kein Zwei-Schritt-Modus | Kein Prüfen vor dem Absenden |
+
+Diese Lösung behebt alle vier Probleme.
+
+---
+
+## Getestet mit
+
+| Hardware | Modell |
+|---|---|
+| Mikrofon/Speakerphone | AnkerWork S600 |
+| Maus | Logitech MX Master 3s |
+| GPU | NVIDIA RTX 5080 16GB |
+| CPU | AMD Ryzen 9 9900X |
+| OS | Windows 11 Pro |
+
+> F9-Mapping über Logitech Options+: Daumentaste → F9 Tastenkürzel
+
+---
+
 ## Installation
 
 ### 1. Dependencies installieren
@@ -74,7 +99,7 @@ Notiere die **Nummer** deines Mikrofons (z.B. `8`).
 
 ### 3. Voice Input konfigurieren
 
-In `frau_mueller_voice.py` anpassen:
+In `voice_input.py` anpassen:
 
 ```python
 AUDIO_DEVICE = 8          # ← Deine Mikrofon-Nummer
@@ -124,7 +149,7 @@ Was vorlesen: Zahlen, Ergebnisse, Statusmeldungen, Kurzantworten.
 
 **Terminal 1 — Voice Input:**
 ```bash
-python frau_mueller_voice.py
+python voice_input.py
 ```
 
 **Terminal 2 — Claude Code:**
@@ -193,11 +218,11 @@ Alle Stimmen auflisten: `edge-tts --list-voices`
 
 Damit Voice Input bei Windows-Start automatisch läuft:
 
-1. Erstelle `frau_mueller_voice.bat`:
+1. Erstelle `voice_input.bat`:
 ```batch
 @echo off
-cd /d D:\Assets
-start /min python frau_mueller_voice.py
+cd /d C:\path\to\claude-code-voice
+start /min python voice_input.py
 ```
 
 2. Lege die `.bat` in den Startup-Ordner:
