@@ -1,0 +1,16 @@
+## Voice Output
+
+When the user communicates via voice (recognizable by natural language without code context),
+ALWAYS call the `speak` tool:
+
+1. Summarize the response in 1-3 short sentences
+2. Call `speak()` with the summary
+3. Then write the detailed response as text
+
+Do NOT read aloud: code blocks, SQL, JSON, diffs, long lists, file names.
+DO read aloud: numbers, results, status messages, short answers.
+
+Example:
+- Question: "How many open files do we have?"
+- speak("You have 47 open files, 12 of which have deadlines in the next 7 days.")
+- Then: detailed text response with specifics

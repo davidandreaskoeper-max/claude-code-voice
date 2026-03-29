@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tts-server": {
+      "command": "python",
+      "args": ["C:/path/to/tts_mcp_server.py"]
+    }
+  }
+}
