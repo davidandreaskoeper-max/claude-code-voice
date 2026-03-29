@@ -4,7 +4,10 @@
 
 > **Spracheingabe (STT):** Läuft vollständig lokal mit faster-whisper — deine Diktate verlassen niemals den Rechner.
 >
-> **Sprachausgabe (TTS):** Nutzt Edge-TTS (Microsoft Neural Voices) — dabei wird nur der Antwort-Text von Claude an Microsoft gesendet, keine Nutzereingaben. Erfordert Internetverbindung. Für vollständig offline: [Piper TTS](https://github.com/rhasspy/piper) als Alternative (siehe Bekannte Einschränkungen).
+> **Sprachausgabe (TTS):** Drei Engines zur Wahl:
+> - **F5-TTS** (empfohlen) — komplett lokal, GPU-beschleunigt, Voice Cloning (klone jede Stimme mit 10s Audio!)
+> - **Piper** — komplett lokal, CPU, sehr schnell, aber nur vorgefertigte Stimmen
+> - **Edge-TTS** — beste Qualität (Microsoft Neural Voices), braucht aber Internet
 
 ---
 
@@ -88,14 +91,45 @@ Diese Lösung behebt alle vier Probleme.
 # Voice Input
 pip install faster-whisper pynput sounddevice numpy pyautogui pyperclip
 
-# Voice Output — wähle eine oder beide:
+# Voice Output — wähle eine Engine:
 pip install edge-tts      # Option A: Edge-TTS (braucht Internet, beste Qualität)
-pip install piper-tts     # Option B: Piper (komplett offline/lokal)
+pip install piper-tts     # Option B: Piper (komplett offline, CPU)
+                          # Option C: F5-TTS (komplett offline, GPU, Voice Cloning) → siehe Schritt 2
 ```
 
 > Beim ersten Start wird das Whisper-Modell "small" (~460 MB) heruntergeladen und gecacht.
 
-### 2. (Nur für Piper) Voice-Modell herunterladen
+### 2. (Nur für F5-TTS) Python 3.11 venv + CUDA Setup
+
+F5-TTS benötigt Python < 3.12 und eine NVIDIA GPU. Setup als isolierte Umgebung:
+
+```bash
+# Python 3.11 installieren (parallel zu bestehender Version)
+pip install uv
+uv python install 3.11
+
+# Venv erstellen
+uv python find 3.11  # → gibt den Pfad zurück
+<python3.11-pfad> -m venv D:\Assets\f5tts_env
+
+# Aktivieren und Pakete installieren
+D:\Assets\f5tts_env\Scripts\activate
+pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cu128
+pip install f5-tts
+```
+
+**FFmpeg Shared Build** (benötigt von torchcodec):
+- Download: https://github.com/GyanD/codexffmpeg/releases (`ffmpeg-X.X-full_build-shared.zip`)
+- Entpacken und Pfad in `f5tts_worker.py` unter `FFMPEG_DIR` eintragen
+
+**Voice Sample** für Voice Cloning:
+- 10-15 Sekunden Audio der gewünschten Stimme als WAV/MP3
+- Pfad in `f5tts_worker.py` unter `REFERENCE_AUDIO` eintragen
+- Tipp: Mit Edge-TTS ein Katja-Sample generieren und klonen!
+
+Beim ersten Start lädt F5-TTS das Modell automatisch herunter (~1.5 GB).
+
+### 3. (Nur für Piper) Voice-Modell herunterladen
 
 ```python
 from piper.download_voices import download_voice
@@ -114,7 +148,7 @@ Das lädt `de_DE-thorsten-high.onnx` (~108 MB) herunter. Verfügbare deutsche St
 | `de_DE-ramona-low` | Niedrig | Weiblich |
 | `de_DE-thorsten_emotional-medium` | Mittel | Männlich (emotional) |
 
-### 3. Audio-Device ermitteln
+### 4. Audio-Device ermitteln
 
 ```python
 import sounddevice as sd
@@ -135,12 +169,18 @@ WHISPER_COMPUTE = "int8"  # "float16" für GPU
 PTT_KEY = keyboard.Key.f9 # Beliebige Taste
 ```
 
-### 5. TTS-Engine wählen
+### 6. TTS-Engine wählen
 
 In `tts_mcp_server.py` anpassen:
 
 ```python
-TTS_ENGINE = "piper"    # "piper" = komplett lokal, "edge" = Microsoft Neural Voices
+TTS_ENGINE = "f5tts"    # "f5tts" = lokal + GPU + Voice Cloning (empfohlen)
+                        # "piper" = lokal + CPU
+                        # "edge"  = Microsoft Neural Voices (Internet)
+
+# F5-TTS-Einstellungen (nur bei TTS_ENGINE = "f5tts")
+F5TTS_PYTHON = r"D:\Assets\f5tts_env\Scripts\python.exe"  # ← Python 3.11 venv
+F5TTS_WORKER = r"D:\Assets\f5tts_worker.py"                # ← Worker-Skript
 
 # Piper-Einstellungen (nur bei TTS_ENGINE = "piper")
 PIPER_MODEL = r"path\to\de_DE-thorsten-high.onnx"  # ← Pfad zum Modell
@@ -148,10 +188,10 @@ PIPER_SPEED = 0.85                                   # Kleiner = schneller
 
 # Edge-TTS-Einstellungen (nur bei TTS_ENGINE = "edge")
 EDGE_VOICE = "de-DE-KatjaNeural"
-EDGE_RATE = "+20%"
+EDGE_RATE = "+30%"
 ```
 
-### 6. MCP-Server registrieren
+### 7. MCP-Server registrieren
 
 Erstelle `.mcp.json` in deinem Claude Code Arbeitsverzeichnis:
 
@@ -169,7 +209,7 @@ Erstelle `.mcp.json` in deinem Claude Code Arbeitsverzeichnis:
 > **Windows-Tipp:** Falls `"python"` nicht funktioniert, den vollen Pfad verwenden:
 > `"C:\\Users\\DEIN_USER\\AppData\\Local\\Python\\pythonXXX\\python.exe"`
 
-### 7. CLAUDE.md konfigurieren
+### 8. CLAUDE.md konfigurieren
 
 Damit Claude Code automatisch vorliest, füge in deine `CLAUDE.md` ein:
 
@@ -187,7 +227,7 @@ Was NICHT vorlesen: Code-Blöcke, SQL, JSON, Diffs, lange Listen.
 Was vorlesen: Zahlen, Ergebnisse, Statusmeldungen, Kurzantworten.
 ```
 
-### 8. Starten
+### 9. Starten
 
 **Terminal 1 — Voice Input:**
 ```bash

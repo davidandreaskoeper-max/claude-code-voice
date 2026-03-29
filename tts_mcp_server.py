@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-TTS MCP-Server for Claude Code
-Supports two engines:
-  - edge-tts (Microsoft Neural Voices, requires internet)
-  - piper (fully local, offline)
+TTS MCP-Server for Claude Code v4.0
+Supports three engines:
+  - f5tts  = F5-TTS (fully local, GPU, voice cloning)
+  - piper  = Piper (fully local, CPU, fast)
+  - edge   = Edge-TTS (Microsoft Neural Voices, internet required)
 
 Setup:
   1. pip install edge-tts        (for edge engine)
      pip install piper-tts       (for piper engine)
-  2. For piper: download a voice model (see README)
-  3. Add to .mcp.json:
+     See README for F5-TTS setup (requires Python 3.11 venv + CUDA)
+  2. Add to .mcp.json:
      {"mcpServers": {"tts-server": {"command": "python", "args": ["path/to/tts_mcp_server.py"]}}}
 """
 
@@ -29,22 +30,65 @@ sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
 sys.stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1)
 
 # ── Configuration ──
-TTS_ENGINE = "piper"              # "edge" = Edge-TTS (internet), "piper" = Piper (local)
+TTS_ENGINE = "f5tts"              # "f5tts" = F5-TTS (local, GPU), "piper" = Piper (local, CPU), "edge" = Edge-TTS (internet)
 
 # Edge-TTS settings
 EDGE_VOICE = "de-DE-KatjaNeural"  # Microsoft Neural Voice
-EDGE_RATE = "+20%"                # Speech speed
+EDGE_RATE = "+30%"                # Speech speed
 EDGE_VOLUME = "+0%"               # Volume offset
 
 # Piper settings
 PIPER_MODEL = r"path\to\de_DE-thorsten-high.onnx"  # ← Change to your model path
-PIPER_SPEED = 0.85                # Lower = faster (1.0 = normal)
+PIPER_SPEED = 0.77               # Lower = faster (1.0 = normal, 0.77 = ~30% faster)
+
+# F5-TTS settings (runs as subprocess in Python 3.11 venv)
+F5TTS_PYTHON = r"D:\Assets\f5tts_env\Scripts\python.exe"  # ← Python 3.11 venv
+F5TTS_WORKER = r"D:\Assets\f5tts_worker.py"                # ← Worker script
 
 TEMP_DIR = tempfile.gettempdir()
 
 _tts_lock = threading.Lock()
 _piper_voice = None
+_f5tts_worker = None
 
+
+# ── F5-TTS Worker (Subprocess) ──
+
+def _start_f5tts_worker():
+    """Start F5-TTS worker process (Python 3.11 + CUDA)."""
+    global _f5tts_worker
+    if _f5tts_worker is not None and _f5tts_worker.poll() is None:
+        return
+    sys.stderr.write("Starting F5-TTS Worker...\n")
+    _f5tts_worker = subprocess.Popen(
+        [F5TTS_PYTHON, F5TTS_WORKER],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=sys.stderr,
+        text=True,
+        encoding='utf-8',
+    )
+    sys.stderr.write("F5-TTS Worker started.\n")
+
+
+def _speak_f5tts(text, audio_path):
+    """TTS with F5-TTS Worker (local, GPU, voice cloning)."""
+    global _f5tts_worker
+    if _f5tts_worker is None or _f5tts_worker.poll() is not None:
+        _start_f5tts_worker()
+
+    _f5tts_worker.stdin.write(text + "\n")
+    _f5tts_worker.stdin.flush()
+    wav_path = _f5tts_worker.stdout.readline().strip()
+
+    if wav_path and wav_path != "ERROR" and os.path.exists(wav_path):
+        import shutil
+        shutil.move(wav_path, audio_path)
+    else:
+        sys.stderr.write(f"F5-TTS: No audio file received (response: {wav_path})\n")
+
+
+# ── Piper ──
 
 def _get_piper_voice():
     """Lazy-load Piper voice (once)."""
@@ -56,6 +100,30 @@ def _get_piper_voice():
         sys.stderr.write("Piper model loaded.\n")
     return _piper_voice
 
+
+def _speak_piper(text, audio_path):
+    """TTS with Piper (local, CPU)."""
+    from piper.config import SynthesisConfig
+    voice = _get_piper_voice()
+    config = SynthesisConfig(length_scale=PIPER_SPEED)
+    with wave.open(audio_path, 'wb') as wav_file:
+        voice.synthesize_wav(text, wav_file, syn_config=config)
+
+
+# ── Edge-TTS ──
+
+def _speak_edge(text, audio_path):
+    """TTS with Edge-TTS (internet required)."""
+    import edge_tts
+
+    async def generate():
+        communicate = edge_tts.Communicate(text, EDGE_VOICE, rate=EDGE_RATE, volume=EDGE_VOLUME)
+        await communicate.save(audio_path)
+
+    asyncio.run(generate())
+
+
+# ── Playback ──
 
 def _play_audio(filepath):
     """Play audio via Windows PowerShell MediaPlayer and wait for completion."""
@@ -90,25 +158,7 @@ $player.Close()
             pass
 
 
-def _speak_edge(text, audio_path):
-    """TTS with Edge-TTS (internet required)."""
-    import edge_tts
-
-    async def generate():
-        communicate = edge_tts.Communicate(text, EDGE_VOICE, rate=EDGE_RATE, volume=EDGE_VOLUME)
-        await communicate.save(audio_path)
-
-    asyncio.run(generate())
-
-
-def _speak_piper(text, audio_path):
-    """TTS with Piper (fully local)."""
-    from piper.config import SynthesisConfig
-    voice = _get_piper_voice()
-    config = SynthesisConfig(length_scale=PIPER_SPEED)
-    with wave.open(audio_path, 'wb') as wav_file:
-        voice.synthesize_wav(text, wav_file, syn_config=config)
-
+# ── Speak Thread ──
 
 def _speak_thread(text):
     """Generate TTS audio + play it (runs in separate thread)."""
@@ -117,10 +167,12 @@ def _speak_thread(text):
             ext = ".mp3" if TTS_ENGINE == "edge" else ".wav"
             audio_path = os.path.join(TEMP_DIR, f"tts_{int(time.time()*1000)}{ext}")
 
-            if TTS_ENGINE == "edge":
-                _speak_edge(text, audio_path)
-            else:
+            if TTS_ENGINE == "f5tts":
+                _speak_f5tts(text, audio_path)
+            elif TTS_ENGINE == "piper":
                 _speak_piper(text, audio_path)
+            else:
+                _speak_edge(text, audio_path)
 
             if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 _play_audio(audio_path)
@@ -130,6 +182,8 @@ def _speak_thread(text):
         except Exception as e:
             sys.stderr.write(f"TTS error: {e}\n")
 
+
+# ── MCP Handler ──
 
 def handle_message(msg):
     """Process MCP JSON-RPC message."""
@@ -143,7 +197,7 @@ def handle_message(msg):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "tts-server", "version": "3.0.0"}
+                "serverInfo": {"name": "tts-server", "version": "4.0.0"}
             }
         }
 
@@ -184,7 +238,6 @@ def handle_message(msg):
 
         if tool_name == 'speak':
             text = args.get('text', '')
-            # Ensure UTF-8 encoding (Windows encoding fix)
             text = text.encode('utf-8').decode('utf-8')
             if text:
                 t = threading.Thread(target=_speak_thread, args=(text,), daemon=True)
@@ -220,18 +273,23 @@ def handle_message(msg):
 
 
 def main():
-    if TTS_ENGINE == "piper":
-        engine_label = f"Piper (local, {os.path.basename(PIPER_MODEL)})"
-    else:
-        engine_label = f"Edge-TTS ({EDGE_VOICE})"
-    sys.stderr.write(f"TTS MCP-Server v3.0 started — Engine: {engine_label}\n")
+    engines = {
+        "f5tts": "F5-TTS (local, GPU, voice cloning)",
+        "piper": f"Piper (local, CPU, {os.path.basename(PIPER_MODEL)})",
+        "edge": f"Edge-TTS ({EDGE_VOICE}, internet)",
+    }
+    sys.stderr.write(f"TTS MCP-Server v4.0 started — Engine: {engines.get(TTS_ENGINE, TTS_ENGINE)}\n")
 
-    # Pre-load Piper model at startup (no delay on first speak)
     if TTS_ENGINE == "piper":
         try:
             _get_piper_voice()
         except Exception as e:
             sys.stderr.write(f"Could not load Piper model: {e}\n")
+    elif TTS_ENGINE == "f5tts":
+        try:
+            _start_f5tts_worker()
+        except Exception as e:
+            sys.stderr.write(f"Could not start F5-TTS Worker: {e}\n")
 
     for line in sys.stdin:
         line = line.strip()
