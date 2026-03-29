@@ -23,6 +23,11 @@ import threading
 import time
 import wave
 
+# ── UTF-8 Encoding for Windows (Fix: Umlauts ü/ö/ä/ß) ──
+sys.stdin = open(sys.stdin.fileno(), mode='r', encoding='utf-8', buffering=1)
+sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+sys.stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1)
+
 # ── Configuration ──
 TTS_ENGINE = "piper"              # "edge" = Edge-TTS (internet), "piper" = Piper (local)
 
@@ -179,6 +184,8 @@ def handle_message(msg):
 
         if tool_name == 'speak':
             text = args.get('text', '')
+            # Ensure UTF-8 encoding (Windows encoding fix)
+            text = text.encode('utf-8').decode('utf-8')
             if text:
                 t = threading.Thread(target=_speak_thread, args=(text,), daemon=True)
                 t.start()
