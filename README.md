@@ -220,11 +220,16 @@ Alle Stimmen auflisten: `edge-tts --list-voices`
 
 Damit Voice Input bei Windows-Start automatisch läuft:
 
-1. Erstelle `voice_input.bat`:
+1. Erstelle `voice_input.bat` (mit Duplikat-Schutz):
 ```batch
 @echo off
-cd /d C:\path\to\claude-code-voice
-start /min python voice_input.py
+:: Prevent duplicate instances
+tasklist /FI "WINDOWTITLE eq VoiceInput" 2>NUL | find /I "python.exe" >NUL && (
+    echo Voice Input already running, skipping.
+    exit /b
+)
+:: IMPORTANT: Use full Python path, NOT just "python" (Windows Store alias conflict!)
+start /MIN "VoiceInput" "C:\full\path\to\python.exe" "-u" "C:\path\to\voice_input.py"
 ```
 
 2. Lege die `.bat` in den Startup-Ordner:
@@ -267,6 +272,8 @@ start /min python voice_input.py
 
 | Problem | Lösung |
 |---|---|
+| F9 reagiert nicht / Diktat stumm | Prüfen ob **zwei** Voice-Prozesse laufen: `tasklist \| findstr python` — zwei Instanzen blockieren sich gegenseitig. Alle killen, eine neu starten. |
+| Windows Store Python startet zweite Instanz | Windows hat einen `python.exe` Alias in WindowsApps. Immer den **vollen Pfad** zum richtigen Python verwenden. Alias deaktivieren: Windows-Einstellungen → Apps → Erweiterte App-Einstellungen → App-Ausführungsaliase → Python deaktivieren. |
 | `speak()` wird nicht aufgerufen | `/mcp` prüfen → tts-server muss "connected" zeigen |
 | TTS-Server "failed" | Vollen Python-Pfad in `.mcp.json` verwenden |
 | Kein Audio bei Aufnahme | `AUDIO_DEVICE` Nummer prüfen (`sd.query_devices()`) |
